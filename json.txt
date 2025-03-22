@@ -1,0 +1,36 @@
+{
+    "role": "business",
+    "business_name": "Abc Business",
+    "business_type": "Technology",
+    "phone_number": {
+        "country_code": "+251",
+        "number": "999-999-999"
+    },
+    "business_email": "info@abcbusiness.com",
+    "business_website": "www.abcbusiness.com",
+    "country": "Ethiopia",
+    "city": "Addis Ababa",
+    "password": "securepassword"
+}
+
+{
+    "role": "admin",
+    "email": "admin@example.com",
+    "password": "adminsecurepassword"
+}
+
+{
+    "role": "individual",
+    "first_name": "Fira",
+    "last_name": "Merga",
+    "gender": "male",
+    "phone_number": {
+        "country_code": "+251",
+        "number": "941-301-503"
+    },
+    "email": "firamerga1@gmail.com",
+    "organization_name": "ABC Corp",
+    "country": "Ethiopia",
+    "city": "Addis Ababa",
+    "password": "123@Firam"
+}
