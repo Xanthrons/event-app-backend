@@ -99,6 +99,22 @@ const Individual = User.discriminator('individual', new mongoose.Schema({
         type: String,
         trim: true,
         required:[true, 'Organization name is required!']
+    },
+    fieldOfStudy: {
+        type: String,
+        default: null
+    },
+    areasOfStudy: {
+        type: [String], // Array of strings for multiple areas
+        default:null
+    },
+    interests: {
+        type: [String], // Array of strings for multiple interests
+        default:null
+    },
+    aboutYourself: {
+        type: String,
+        default: null
     }
 }));
 
@@ -125,6 +141,22 @@ const Business = User.discriminator('business', new mongoose.Schema({
         trim: true,
         lowercase: true,
         match: [/.+\@.+\..+/, 'Please enter a valid business email address']
+    },
+    businessIn: {
+        type: String,
+        default: null
+    },
+    areasOfOperation: {
+        type: [String], // Array of strings for multiple areas
+        default:null,
+    },
+    interestedIn: {
+        type: [String], // Array of strings for multiple interests
+        default:null,
+    },
+    aboutOrganization: {
+        type: String,
+        default: null
     }
 }));
 

@@ -157,8 +157,13 @@ exports.sendVerificationCode = async (req, res) => {
 exports.validateVerificationCode = async (req, res) => {
     try {
         const { email, code } = req.body;
+        let user = null;
 
-        const user = await User.findOne({ email }).select('+verificationCode +verificationCodeValidation');
+        user = await Individual.findOne({ email }).select('+verificationCode +verificationCodeValidation');
+        if (!user) {
+            user = await Business.findOne({ business_email: email }).select('+verificationCode +verificationCodeValidation');
+        }
+
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
@@ -171,21 +176,110 @@ exports.validateVerificationCode = async (req, res) => {
             return res.status(400).json({ message: 'Verification code is invalid or has expired.' });
         }
 
-        const isMatch = await bcrypt.compare(code, user.verificationCode);
+        const isMatch = await comparePassword(code, user.verificationCode);
         if (!isMatch) {
             return res.status(400).json({ message: 'Verification code is incorrect.' });
         }
 
-        user.verified = true;
-        user.verificationCode = undefined;
-        user.verificationCodeValidation = undefined;
-        await user.save();
+        const updateData = {
+            verified: true,
+            verificationCode: undefined,
+            verificationCodeValidation: undefined,
+        };
 
-        res.status(200).json({ message: 'Email verified successfully!' });
+        if (user instanceof Individual) {
+            await Individual.updateOne({ _id: user._id }, updateData);
+            return res.status(200).json({ message: 'Email verified successfully!', role: 'individual' });
+        } else if (user instanceof Business) {
+            await Business.updateOne({ _id: user._id }, updateData);
+            return res.status(200).json({ message: 'Email verified successfully!', role: 'business' });
+        }
 
     } catch (error) {
         console.error('Error validating verification code:', error);
         res.status(500).json({ message: 'Failed to validate verification code.' });
+    }
+};
+// New functions to handle additional information submission
+exports.updateIndividualInfo = async (req, res) => {
+    try {
+        const schema = Joi.object({
+            fieldOfStudy: Joi.string().optional().allow(null, ''),
+            areasOfStudy: Joi.array().items(Joi.string()).optional().allow(null, ''),
+            interests: Joi.array().items(Joi.string()).optional().allow(null, ''),
+            aboutYourself: Joi.string().optional().allow(null, '')
+        });
+        const { error } = schema.validate(req.body);
+        if (error) return res.status(400).json({ message: error.details[0].message });
+
+        const individualId = req.user.id; // Assuming you have authentication middleware setting req.user
+        const updatedIndividual = await Individual.findByIdAndUpdate(individualId, req.body, { new: true });
+
+        if (!updatedIndividual) {
+            return res.status(404).json({ message: 'Individual user not found.' });
+        }
+
+        res.status(200).json({ message: 'Additional information updated successfully.', user: updatedIndividual });
+
+    } catch (error) {
+        console.error('Error updating individual info:', error);
+        res.status(500).json({ message: 'Failed to update additional information.' });
+    }
+};
+
+exports.updateBusinessInfo = async (req, res) => {
+    try {
+        const schema = Joi.object({
+            businessIn: Joi.string().optional().allow(null, ''),
+            areasOfOperation: Joi.array().items(Joi.string()).optional().allow(null, ''),
+            interestedIn: Joi.array().items(Joi.string()).optional().allow(null, ''),
+            aboutOrganization: Joi.string().optional().allow(null, '')
+        });
+        const { error } = schema.validate(req.body);
+        if (error) return res.status(400).json({ message: error.details[0].message });
+
+        const businessId = req.user.id; // Assuming you have authentication middleware setting req.user
+        const updatedBusiness = await Business.findByIdAndUpdate(businessId, req.body, { new: true });
+
+        if (!updatedBusiness) {
+            return res.status(404).json({ message: 'Business user not found.' });
+        }
+
+        res.status(200).json({ message: 'Additional information updated successfully.', user: updatedBusiness });
+
+    } catch (error) {
+        console.error('Error updating business info:', error);
+        res.status(500).json({ message: 'Failed to update additional information.' });
+    }
+};
+
+// New function to get user profile (including role)
+exports.getMe = async (req, res) => {
+    try {
+        // req.user is set by the 'protect' middleware
+        if (!req.user) {
+            return res.status(401).json({ message: 'Not authorized' });
+        }
+
+        let userDetails;
+        if (req.user.role === 'individual') {
+            userDetails = await Individual.findById(req.user.id);
+        } else if (req.user.role === 'business') {
+            userDetails = await Business.findById(req.user.id);
+        } else if (req.user.role === 'admin') {
+            userDetails = await Admin.findById(req.user.id);
+        }
+
+        if (!userDetails) {
+            return res.status(404).json({ message: 'User details not found' });
+        }
+
+        // Send back the user details, including the role
+        res.status(200).json(userDetails);
+
+    } catch (error) {
+        console.error('Error fetching user profile:', error);
+        res.status(500).json({ message: 'Failed to fetch user profile' });
     }
 };
 
