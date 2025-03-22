@@ -5,6 +5,12 @@ const Joi = require('joi');
 const { ObjectId } = require('mongoose').Types;
 const { sendEmail } = require('../middlewares/sendMail');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');   // For generating random tokens 
+const {
+    validateForgotPassword,
+    validateVerifyResetCode,
+    validateResetPassword
+} = require('../middlewares/validator'); // Import the validation functions
 
 // Function to generate JWT token
 const generateToken = (id) => {
@@ -136,7 +142,7 @@ exports.sendVerificationCode = async (req, res) => {
 
         const subject = 'Email Verification Code';
         const html = `<p>Your verification code is: <strong>${verificationCode}</strong></p>
-                    <p>This code will expire in 10 minutes.</p>`;
+                    <p>This code will expire in 10 minutes.</p><br> <p>If you didn’t request this, please ignore this email.</p> <br> <br> <p>Thanks!</p> <br> <p>Team</p>`;
 
         await sendEmail(email, subject, html);
 
@@ -180,5 +186,157 @@ exports.validateVerificationCode = async (req, res) => {
     } catch (error) {
         console.error('Error validating verification code:', error);
         res.status(500).json({ message: 'Failed to validate verification code.' });
+    }
+};
+
+exports.forgotPassword = async (req, res) => {
+    try {
+        const { error } = validateForgotPassword(req.body);
+        if (error) return res.status(400).json({ message: error.details[0].message });
+
+        const { email } = req.body;
+        let user = null;
+
+        user = await Individual.findOne({ email });
+        if (!user) {
+            user = await Business.findOne({ business_email: email });
+        }
+        if (!user) {
+            user = await Admin.findOne({ email });
+        }
+
+        if (!user) {
+            return res.status(404).json({ message: 'User with this email not found.' });
+        }
+
+        const verificationCode = generateVerificationCode();
+        const hashedVerificationCode = await hashPassword(verificationCode);
+        const passwordResetCodeExpires = Date.now() + 15 * 60 * 1000; // 15 minutes expiry
+
+        const updateData = {
+            passwordResetCode: hashedVerificationCode,
+            passwordResetCodeExpires: passwordResetCodeExpires,
+        };
+
+        if (user instanceof Individual) {
+            await Individual.updateOne({ _id: user._id }, updateData);
+        } else if (user instanceof Business) {
+            await Business.updateOne({ _id: user._id }, updateData);
+        } else if (user instanceof Admin) {
+            await Admin.updateOne({ _id: user._id }, updateData);
+        }
+
+        const subject = 'Password Reset Verification Code';
+        const html = `<p>You have requested to reset your password. Please use the following verification code:</p>
+                   <h2>${verificationCode}</h2>
+                   <p>This code will expire in 15 minutes.</p>
+                   <p>If you did not request this, please ignore this email.</p>`;
+
+        await sendEmail(user.email || user.business_email, subject, html);
+
+        res.status(200).json({ message: 'Password reset verification code sent to your email address.' });
+
+    } catch (error) {
+        console.error('Error during forgot password request:', error);
+        res.status(500).json({ message: 'Something went wrong, please try again later.' });
+    }
+};
+
+exports.verifyResetCode = async (req, res) => {
+    try {
+        const { error } = validateVerifyResetCode(req.body);
+        if (error) return res.status(400).json({ message: error.details[0].message });
+
+        const { email, code } = req.body;
+        let user = null;
+
+        user = await Individual.findOne({ email }).select('+passwordResetCode +passwordResetCodeExpires');
+        if (!user) {
+            user = await Business.findOne({ business_email: email }).select('+passwordResetCode +passwordResetCodeExpires');
+        }
+        if (!user) {
+            user = await Admin.findOne({ email }).select('+passwordResetCode +passwordResetCodeExpires');
+        }
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        if (!user.passwordResetCode || !user.passwordResetCodeExpires || user.passwordResetCodeExpires < Date.now()) {
+            return res.status(400).json({ message: 'Verification code is invalid or has expired.' });
+        }
+
+        const isMatch = await comparePassword(code, user.passwordResetCode);
+        if (!isMatch) {
+            return res.status(400).json({ message: 'Verification code is incorrect.' });
+        }
+
+        const tempToken = crypto.randomBytes(20).toString('hex');
+        const tempTokenExpires = Date.now() + 30 * 60 * 1000; // 30 minutes expiry for the temp token
+
+        const updateData = {
+            passwordResetTempToken: tempToken,
+            passwordResetTempTokenExpires: tempTokenExpires,
+            passwordResetCode: undefined, // Clear the hashed verification code
+            passwordResetCodeExpires: undefined,
+        };
+
+        if (user instanceof Individual) {
+            await Individual.updateOne({ _id: user._id }, updateData);
+        } else if (user instanceof Business) {
+            await Business.updateOne({ _id: user._id }, updateData);
+        } else if (user instanceof Admin) {
+            await Admin.updateOne({ _id: user._id }, updateData);
+        }
+
+        res.status(200).json({ message: 'Verification code is valid.', tempToken: tempToken });
+
+    } catch (error) {
+        console.error('Error during verify reset code:', error);
+        res.status(500).json({ message: 'Something went wrong, please try again later.' });
+    }
+};
+
+exports.resetPassword = async (req, res) => {
+    try {
+        const { error } = validateResetPassword(req.body);
+        if (error) return res.status(400).json({ message: error.details[0].message });
+
+        const { tempToken, newPassword } = req.body;
+        let user = null;
+
+        user = await Individual.findOne({ passwordResetTempToken: tempToken, passwordResetTempTokenExpires: { $gt: Date.now() } });
+        if (!user) {
+            user = await Business.findOne({ passwordResetTempToken: tempToken, passwordResetTempTokenExpires: { $gt: Date.now() } });
+        }
+        if (!user) {
+            user = await Admin.findOne({ passwordResetTempToken: tempToken, passwordResetTempTokenExpires: { $gt: Date.now() } });
+        }
+
+        if (!user) {
+            return res.status(400).json({ message: 'Invalid or expired temporary token for password reset.' });
+        }
+
+        const hashedPassword = await hashPassword(newPassword);
+
+        const updateData = {
+            password: hashedPassword,
+            passwordResetTempToken: undefined,
+            passwordResetTempTokenExpires: undefined,
+        };
+
+        if (user instanceof Individual) {
+            await Individual.updateOne({ _id: user._id }, updateData);
+        } else if (user instanceof Business) {
+            await Business.updateOne({ _id: user._id }, updateData);
+        } else if (user instanceof Admin) {
+            await Admin.updateOne({ _id: user._id }, updateData);
+        }
+
+        res.status(200).json({ message: 'Password reset successfully.' });
+
+    } catch (error) {
+        console.error('Error during reset password:', error);
+        res.status(500).json({ message: 'Something went wrong, please try again later.' });
     }
 };

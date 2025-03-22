@@ -24,13 +24,21 @@ const userSchema = new mongoose.Schema({
         type: Date,
         select: false
     },
-    forgotPasswordCode:{
-        type: Number,
-        select:false
+    passwordResetCode: { 
+        type: String, 
+        select: false 
     },
-    forgotPasswordCodeValidation:{
-        type: Number,
-        select:false
+    passwordResetCodeExpires: { 
+        type: Date, 
+        select: false
+    },
+    passwordResetTempToken: { 
+        type: String, 
+        select: false
+    },
+    passwordResetTempTokenExpires: { 
+        type: Date, 
+        select: false
     },
     country: {
         type: String,

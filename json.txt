@@ -1,3 +1,4 @@
+Register
 {
     "role": "business",
     "business_name": "Abc Business",
@@ -33,4 +34,19 @@
     "country": "Ethiopia",
     "city": "Addis Ababa",
     "password": "123@Firam"
+}
+Login 
+{
+    "email": "firamerga1@gmail.com",
+  	"password": "123@Firam"
+    }
+
+Verify code
+{
+    "email": "firamerga1@gmail.com",
+    "code": "123456"
+}
+Send Verification code
+{
+     "email": "firamerga1@gmail.com"
 }

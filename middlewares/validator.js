@@ -1,4 +1,5 @@
 const Joi = require('joi');
+
 const personalEmailDomains = [
     'gmail.com',
     'yahoo.com',
@@ -13,19 +14,19 @@ const personalEmailDomains = [
     // Add more common personal email domains as needed
 ];
 
+const passwordSchema = Joi.string()
+    .min(8) // Increase minimum length to 8 (or more)
+    .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$'))
+    .required()
+    .messages({
+        'string.min': 'Password must be at least 8 characters long',
+        'string.pattern.base': 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&)',
+        'any.required': 'Password is required'
+    });
+
 exports.validateRegistration = (req, res, next) => {
     const { role } = req.body;
     let schema;
-
-    const passwordSchema = Joi.string()
-        .min(8) // Increase minimum length to 8 (or more)
-        .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$'))
-        .required()
-        .messages({
-            'string.min': 'Password must be at least 8 characters long',
-            'string.pattern.base': 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&)',
-            'any.required': 'Password is required'
-        });
 
     if (role === 'individual') {
         schema = Joi.object({
@@ -80,4 +81,27 @@ exports.validateRegistration = (req, res, next) => {
         return res.status(400).json({ message: error.details[0].message });
     }
     next();
+};
+
+// New validation functions for Forgot Password
+exports.validateForgotPassword = (body) => {
+    const schema = Joi.object({
+        email: Joi.string().email().required().label('Email')
+    });
+    return schema.validate(body);
+};
+
+exports.validateVerifyResetCode = (body) => {
+    const schema = Joi.object({
+        email: Joi.string().email().required().label('Email'),
+        code: Joi.string().length(6).pattern(/^[0-9]+$/).required().label('Verification Code')
+    });
+    return schema.validate(body);
+};
+exports.validateResetPassword = (body) => {
+    const schema = Joi.object({
+        tempToken: Joi.string().required().label('Temporary Token'),
+        newPassword: passwordSchema // Use the same strong password schema
+    });
+    return schema.validate(body);
 };
