@@ -40,8 +40,17 @@ const generateToken = (id) => {
 };
 
 // Controller for user registration (Individual and Business)
+const pendingRegistrations = new Map();
+const generateVerificationCode = () => {
+    // Generate a random 6-digit number
+    return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+const hashVerificationCode = async (code) => {
+    const saltRounds = 10;
+    return await bcrypt.hash(code, saltRounds);
+};
 exports.register = async (req, res) => {
-    // console.log(req.body);
     try {
         const { role, password, ...userData } = req.body;
 
@@ -52,28 +61,79 @@ exports.register = async (req, res) => {
             existingUser = await User.findOne({ role, business_email: userData.business_email });
         }
 
-        if (existingUser) {
-            return res.status(409).json({ message: 'Email already exists!' });
+        if (existingUser && existingUser.verified) {
+            return res.status(409).json({ message: 'Account with this email is already registered and verified. Please log in.' });
         }
 
+        const verificationCode = generateVerificationCode();
+        const hashedVerificationCode = await hashVerificationCode(verificationCode);
+        const expiryTime = Date.now() + 3600000; // Code expires in 1 hour
+
+        const registrationData = {
+            ...userData,
+            password, // Store raw password temporarily
+            role,
+            verificationCode: hashedVerificationCode, // Store the hashed code
+            expiryTime,
+        };
+
+        pendingRegistrations.set(userData.email || userData.business_email, registrationData);
+
+        const subject = 'Verify Your Email Address';
+        const html = `<p>Your verification code is: <strong>${verificationCode}</strong></p>
+                      <p>This code will expire in 1 hour.</p><br> <p>If you didn’t request this, please ignore this email.</p> <br> <br> <p>Thanks!</p> <br> <p>Team</p>`;
+
+        await sendEmail(userData.email || userData.business_email, subject, html);
+
+        res.status(200).json({ message: 'Verification code sent to your email address.' });
+
+    } catch (error) {
+        console.error('Error during initial registration:', error);
+        res.status(500).json({ message: 'Failed to initiate registration.' });
+    }
+};
+exports.verifyEmail = async (req, res) => {
+    try {
+        const { email, code } = req.body;
+
+        const registrationData = pendingRegistrations.get(email);
+
+        if (!registrationData) {
+            return res.status(404).json({ message: 'No pending registration found for this email or the code has expired.' });
+        }
+
+        const isMatch = await bcrypt.compare(code, registrationData.verificationCode); // Compare the provided code with the stored hash
+
+        if (!isMatch) {
+            return res.status(400).json({ message: 'Invalid verification code.' });
+        }
+
+        if (Date.now() > registrationData.expiryTime) {
+            pendingRegistrations.delete(email);
+            return res.status(400).json({ message: 'Verification code has expired. Please register again.' });
+        }
+
+        const { password, role, ...rest } = registrationData;
         const hashedPassword = await hashPassword(password);
 
         let newUser;
         if (role === 'individual') {
-            newUser = await Individual.create({ ...userData, password: hashedPassword });
+            newUser = await Individual.create({ ...rest, password: hashedPassword, email: rest.email, verified: true }); // Mark as verified upon successful verification
         } else if (role === 'business') {
-            newUser = await Business.create({ ...userData, password: hashedPassword });
+            newUser = await Business.create({ ...rest, password: hashedPassword, business_email: rest.business_email, verified: true }); // Mark as verified
         } else if (role === 'admin') {
-            newUser = await Admin.create({ ...userData, password: hashedPassword });
+            newUser = await Admin.create({ ...rest, password: hashedPassword, email: rest.email, verified: true }); // Mark as verified
         }
+
+        pendingRegistrations.delete(email);
 
         const token = generateToken(newUser._id);
 
-        res.status(201).json({ message: 'Registration successful!', token, user: { _id: newUser._id, role: newUser.role, email: newUser.email || newUser.business_email } });
+        res.status(201).json({ message: 'Email verified and account created successfully!', token, user: { _id: newUser._id, role: newUser.role, email: newUser.email || newUser.business_email } });
 
     } catch (error) {
-        console.error('Error during registration:', error);
-        res.status(500).json({ message: 'Failed to register user.' });
+        console.error('Error validating verification code:', error);
+        res.status(500).json({ message: 'Failed to verify email.' });
     }
 };
 
@@ -129,97 +189,8 @@ exports.logout = async (req, res) => {
     }
 };
 
-const generateVerificationCode = () => {
-    // Generate a random 6-digit number
-    return Math.floor(100000 + Math.random() * 900000).toString();
-};
 
-const hashVerificationCode = async (code) => {
-    const saltRounds = 10;
-    return await bcrypt.hash(code, saltRounds);
-};
 
-exports.sendVerificationCode = async (req, res) => {
-    try {
-        const { email } = req.body;
-
-        const user = await User.findOne({ email });
-        if (!user) {
-            return res.status(404).json({ message: 'User not found.' });
-        }
-
-        if (user.verified) {
-            return res.status(400).json({ message: 'User is already verified.' });
-        }
-
-        const verificationCode = generateVerificationCode();
-        const hashedVerificationCode = await hashVerificationCode(verificationCode);
-        const verificationCodeExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
-
-        user.verificationCode = hashedVerificationCode;
-        user.verificationCodeValidation = verificationCodeExpiry;
-        await user.save({ validateBeforeSave: false }); // Prevent other validations
-
-        const subject = 'Email Verification Code';
-        const html = `<p>Your verification code is: <strong>${verificationCode}</strong></p>
-                    <p>This code will expire in 10 minutes.</p><br> <p>If you didn’t request this, please ignore this email.</p> <br> <br> <p>Thanks!</p> <br> <p>Team</p>`;
-
-        await sendEmail(email, subject, html);
-
-        res.status(200).json({ message: 'Verification code sent to your email.' });
-
-    } catch (error) {
-        console.error('Error sending verification code:', error);
-        res.status(500).json({ message: 'Failed to send verification code.' });
-    }
-};
-
-exports.validateVerificationCode = async (req, res) => {
-    try {
-        const { email, code } = req.body;
-        let user = null;
-
-        user = await Individual.findOne({ email }).select('+verificationCode +verificationCodeValidation');
-        if (!user) {
-            user = await Business.findOne({ business_email: email }).select('+verificationCode +verificationCodeValidation');
-        }
-
-        if (!user) {
-            return res.status(404).json({ message: 'User not found.' });
-        }
-
-        if (user.verified) {
-            return res.status(400).json({ message: 'User is already verified.' });
-        }
-
-        if (!user.verificationCode || !user.verificationCodeValidation || user.verificationCodeValidation < Date.now()) {
-            return res.status(400).json({ message: 'Verification code is invalid or has expired.' });
-        }
-
-        const isMatch = await comparePassword(code, user.verificationCode);
-        if (!isMatch) {
-            return res.status(400).json({ message: 'Verification code is incorrect.' });
-        }
-
-        const updateData = {
-            verified: true,
-            verificationCode: undefined,
-            verificationCodeValidation: undefined,
-        };
-
-        if (user instanceof Individual) {
-            await Individual.updateOne({ _id: user._id }, updateData);
-            return res.status(200).json({ message: 'Email verified successfully!', role: 'individual' });
-        } else if (user instanceof Business) {
-            await Business.updateOne({ _id: user._id }, updateData);
-            return res.status(200).json({ message: 'Email verified successfully!', role: 'business' });
-        }
-
-    } catch (error) {
-        console.error('Error validating verification code:', error);
-        res.status(500).json({ message: 'Failed to validate verification code.' });
-    }
-};
 // New functions to handle additional information submission
 exports.updateIndividualInfo = async (req, res) => {
     try {
@@ -456,100 +427,8 @@ exports.resetPassword = async (req, res) => {
 };
 
 
-// //Profile Picture Upload
-// const bucket = admin.storage().bucket();
 
-// exports.uploadIndividualProfilePicture = [
-//     protect, // Ensure user is authenticated
-//     async (req, res) => {
-//         try {
-//             if (!req.files || Object.keys(req.files).length === 0 || !req.files.profilePicture) {
-//                 return res.status(400).json({ message: 'No profile picture file uploaded.' });
-//             }
-
-//             const individualId = req.user.id;
-//             const profilePicture = req.files.profilePicture;
-//             const fileName = `profile-pictures/individual-${individualId}-${Date.now()}${path.extname(profilePicture.name)}`;
-//             const file = bucket.file(fileName);
-
-//             const metadata = {
-//                 contentType: profilePicture.mimetype,
-//             };
-
-//             // Upload the file to Firebase Storage
-//             await file.upload(profilePicture.tempFilePath, { metadata: metadata });
-
-//             // Get the download URL
-//             const downloadURL = await file.getSignedUrl({
-//                 action: 'read',
-//                 expires: '03-01-2500' // Example expiry date (far in the future)
-//             });
-
-//             const updatedIndividual = await Individual.findByIdAndUpdate(
-//                 individualId,
-//                 { profilePicture: downloadURL[0] },
-//                 { new: true }
-//             );
-
-//             if (!updatedIndividual) {
-//                 return res.status(404).json({ message: 'Individual user not found.' });
-//             }
-
-//             res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedIndividual });
-
-//         } catch (error) {
-//             console.error('Error uploading individual profile picture to Firebase:', error);
-//             res.status(500).json({ message: 'Failed to upload profile picture.' });
-//         }
-//     }
-// ];
-
-// exports.uploadBusinessProfilePicture = [
-//     protect, // Ensure user is authenticated
-//     async (req, res) => {
-//         try {
-//             if (!req.files || Object.keys(req.files).length === 0 || !req.files.profilePicture) {
-//                 return res.status(400).json({ message: 'No profile picture file uploaded.' });
-//             }
-
-//             const businessId = req.user.id;
-//             const profilePicture = req.files.profilePicture;
-//             const fileName = `profile-pictures/business-${businessId}-${Date.now()}${path.extname(profilePicture.name)}`;
-//             const file = bucket.file(fileName);
-
-//             const metadata = {
-//                 contentType: profilePicture.mimetype,
-//             };
-
-//             // Upload the file to Firebase Storage
-//             await file.upload(profilePicture.tempFilePath, { metadata: metadata });
-
-//             // Get the download URL
-//             const downloadURL = await file.getSignedUrl({
-//                 action: 'read',
-//                 expires: '03-01-2500' // Example expiry date (far in the future)
-//             });
-
-//             const updatedBusiness = await Business.findByIdAndUpdate(
-//                 businessId,
-//                 { profilePicture: downloadURL[0] },
-//                 { new: true }
-//             );
-
-//             if (!updatedBusiness) {
-//                 return res.status(404).json({ message: 'Business user not found.' });
-//             }
-
-//             res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedBusiness });
-
-//         } catch (error) {
-//             console.error('Error uploading business profile picture to Firebase:', error);
-//             res.status(500).json({ message: 'Failed to upload profile picture.' });
-//         }
-//     }
-// ];
-
-
+// main delete account function
 exports.deleteAccount = async (req, res) => {
     try {
         const userId = req.user.id;
