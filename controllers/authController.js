@@ -10,7 +10,12 @@ const {
     validateForgotPassword,
     validateVerifyResetCode,
     validateResetPassword
-} = require('../middlewares/validator'); // Import the validation functions
+} = require('../middlewares/validator'); 
+const path = require('path');
+const cloudinary = require('cloudinary').v2;
+const multer = require('multer');
+const { protect } = require('../middlewares/authMiddleware');
+
 
 // const admin = require('firebase-admin');
 
@@ -31,6 +36,17 @@ const {
 //     credential: admin.credential.cert(serviceAccount),
 //     storageBucket: process.env.FIREBASE_STORAGE_BUCKET_URL // Make sure you have this in your .env file (e.g., gs://your-project-id.appspot.com)
 // });
+
+// Configure Cloudinary
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// Configure multer for memory storage
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
 // Function to generate JWT token
 const generateToken = (id) => {
@@ -188,8 +204,6 @@ exports.logout = async (req, res) => {
         res.status(500).json({ message: 'Failed to logout.' });
     }
 };
-
-
 
 // New functions to handle additional information submission
 exports.updateIndividualInfo = async (req, res) => {
@@ -426,8 +440,6 @@ exports.resetPassword = async (req, res) => {
     }
 };
 
-
-
 // main delete account function
 exports.deleteAccount = async (req, res) => {
     try {
@@ -488,3 +500,79 @@ exports.testDeleteAccountByEmail = async (req, res) => {
         res.status(500).json({ message: 'Failed to delete account.' });
     }
 };
+
+//Upload Profile picture
+
+exports.uploadIndividualProfilePicture = [
+    protect, // Assuming you have this authentication middleware
+    upload.single('profilePicture'), // 'profilePicture' is the name of the field in the form-data
+    async (req, res) => {
+        try {
+            if (!req.file) {
+                return res.status(400).json({ message: 'No profile picture file uploaded.' });
+            }
+
+            const individualId = req.user.id;
+
+            const result = await cloudinary.uploader.upload(req.file.buffer.toString('base64'), {
+                folder: 'profile-pictures',
+                public_id: `individual-${individualId}-${Date.now()}`,
+            });
+
+            const profilePictureUrl = result.secure_url;
+
+            const updatedIndividual = await Individual.findByIdAndUpdate(
+                individualId,
+                { profilePicture: profilePictureUrl },
+                { new: true }
+            );
+
+            if (!updatedIndividual) {
+                return res.status(404).json({ message: 'Individual user not found.' });
+            }
+
+            res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedIndividual });
+
+        } catch (error) {
+            console.error('Error uploading individual profile picture to Cloudinary:', error);
+            res.status(500).json({ message: 'Failed to upload profile picture.' });
+        }
+    }
+];
+
+exports.uploadBusinessProfilePicture = [
+    protect, // Assuming you have this authentication middleware
+    upload.single('profilePicture'), // 'profilePicture' is the name of the field in the form-data
+    async (req, res) => {
+        try {
+            if (!req.file) {
+                return res.status(400).json({ message: 'No profile picture file uploaded.' });
+            }
+
+            const businessId = req.user.id;
+
+            const result = await cloudinary.uploader.upload(req.file.buffer.toString('base64'), {
+                folder: 'profile-pictures',
+                public_id: `business-${businessId}-${Date.now()}`,
+            });
+
+            const profilePictureUrl = result.secure_url;
+
+            const updatedBusiness = await Business.findByIdAndUpdate(
+                businessId,
+                { profilePicture: profilePictureUrl },
+                { new: true }
+            );
+
+            if (!updatedBusiness) {
+                return res.status(404).json({ message: 'Business user not found.' });
+            }
+
+            res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedBusiness });
+
+        } catch (error) {
+            console.error('Error uploading business profile picture to Cloudinary:', error);
+            res.status(500).json({ message: 'Failed to upload profile picture.' });
+        }
+    }
+];

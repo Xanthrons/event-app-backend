@@ -17,5 +17,8 @@ router.post('/business/additional-info', protect, authController.updateBusinessI
 router.get('/me', protect, authController.getMe);
 router.delete('/me', protect, authController.deleteAccount);
 router.delete('/test-delete', authController.testDeleteAccountByEmail); // Modified DELETE route for testing purposes
+router.post('/individual/upload-profile-picture', protect, authController.uploadIndividualProfilePicture);
+router.post('/business/upload-profile-picture', protect, authController.uploadBusinessProfilePicture);
+
 
 module.exports = router;
