@@ -12,6 +12,26 @@ const {
     validateResetPassword
 } = require('../middlewares/validator'); // Import the validation functions
 
+// const admin = require('firebase-admin');
+
+// const serviceAccount = {
+//   type: process.env.FIREBASE_TYPE,
+//   project_id: process.env.FIREBASE_PROJECT_ID,
+//   private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+//   private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'), 
+//   client_email: process.env.FIREBASE_CLIENT_EMAIL,
+//   client_id: process.env.FIREBASE_CLIENT_ID,
+//   auth_uri: process.env.FIREBASE_AUTH_URI,
+//   token_uri: process.env.FIREBASE_TOKEN_URI,
+//   auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_X509_CERT_URL,
+//   client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL,
+//   universe_domain: process.env.FIREBASE_UNIVERSE_DOMAIN
+// };
+// admin.initializeApp({
+//     credential: admin.credential.cert(serviceAccount),
+//     storageBucket: process.env.FIREBASE_STORAGE_BUCKET_URL // Make sure you have this in your .env file (e.g., gs://your-project-id.appspot.com)
+// });
+
 // Function to generate JWT token
 const generateToken = (id) => {
     return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -432,5 +452,160 @@ exports.resetPassword = async (req, res) => {
     } catch (error) {
         console.error('Error during reset password:', error);
         res.status(500).json({ message: 'Something went wrong, please try again later.' });
+    }
+};
+
+
+// //Profile Picture Upload
+// const bucket = admin.storage().bucket();
+
+// exports.uploadIndividualProfilePicture = [
+//     protect, // Ensure user is authenticated
+//     async (req, res) => {
+//         try {
+//             if (!req.files || Object.keys(req.files).length === 0 || !req.files.profilePicture) {
+//                 return res.status(400).json({ message: 'No profile picture file uploaded.' });
+//             }
+
+//             const individualId = req.user.id;
+//             const profilePicture = req.files.profilePicture;
+//             const fileName = `profile-pictures/individual-${individualId}-${Date.now()}${path.extname(profilePicture.name)}`;
+//             const file = bucket.file(fileName);
+
+//             const metadata = {
+//                 contentType: profilePicture.mimetype,
+//             };
+
+//             // Upload the file to Firebase Storage
+//             await file.upload(profilePicture.tempFilePath, { metadata: metadata });
+
+//             // Get the download URL
+//             const downloadURL = await file.getSignedUrl({
+//                 action: 'read',
+//                 expires: '03-01-2500' // Example expiry date (far in the future)
+//             });
+
+//             const updatedIndividual = await Individual.findByIdAndUpdate(
+//                 individualId,
+//                 { profilePicture: downloadURL[0] },
+//                 { new: true }
+//             );
+
+//             if (!updatedIndividual) {
+//                 return res.status(404).json({ message: 'Individual user not found.' });
+//             }
+
+//             res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedIndividual });
+
+//         } catch (error) {
+//             console.error('Error uploading individual profile picture to Firebase:', error);
+//             res.status(500).json({ message: 'Failed to upload profile picture.' });
+//         }
+//     }
+// ];
+
+// exports.uploadBusinessProfilePicture = [
+//     protect, // Ensure user is authenticated
+//     async (req, res) => {
+//         try {
+//             if (!req.files || Object.keys(req.files).length === 0 || !req.files.profilePicture) {
+//                 return res.status(400).json({ message: 'No profile picture file uploaded.' });
+//             }
+
+//             const businessId = req.user.id;
+//             const profilePicture = req.files.profilePicture;
+//             const fileName = `profile-pictures/business-${businessId}-${Date.now()}${path.extname(profilePicture.name)}`;
+//             const file = bucket.file(fileName);
+
+//             const metadata = {
+//                 contentType: profilePicture.mimetype,
+//             };
+
+//             // Upload the file to Firebase Storage
+//             await file.upload(profilePicture.tempFilePath, { metadata: metadata });
+
+//             // Get the download URL
+//             const downloadURL = await file.getSignedUrl({
+//                 action: 'read',
+//                 expires: '03-01-2500' // Example expiry date (far in the future)
+//             });
+
+//             const updatedBusiness = await Business.findByIdAndUpdate(
+//                 businessId,
+//                 { profilePicture: downloadURL[0] },
+//                 { new: true }
+//             );
+
+//             if (!updatedBusiness) {
+//                 return res.status(404).json({ message: 'Business user not found.' });
+//             }
+
+//             res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedBusiness });
+
+//         } catch (error) {
+//             console.error('Error uploading business profile picture to Firebase:', error);
+//             res.status(500).json({ message: 'Failed to upload profile picture.' });
+//         }
+//     }
+// ];
+
+
+exports.deleteAccount = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const userRole = req.user.role;
+
+        let deletionResult;
+
+        if (userRole === 'individual') {
+            deletionResult = await Individual.findByIdAndDelete(userId);
+        } else if (userRole === 'business') {
+            deletionResult = await Business.findByIdAndDelete(userId);
+        } else if (userRole === 'admin') {
+            deletionResult = await Admin.findByIdAndDelete(userId);
+        }
+
+        if (!deletionResult) {
+            return res.status(404).json({ message: 'Account not found.' });
+        }
+
+        res.status(200).json({ message: 'Account deleted successfully.' });
+
+    } catch (error) {
+        console.error('Error deleting account:', error);
+        res.status(500).json({ message: 'Failed to delete account.' });
+    }
+};
+
+//Test -delete i will remove this later for the production purpose
+exports.testDeleteAccountByEmail = async (req, res) => {
+    try {
+        const { email, role } = req.body;
+
+        if (!email || !role) {
+            return res.status(400).json({ message: 'Please provide email and role.' });
+        }
+
+        let deletionResult;
+
+        if (role === 'individual') {
+            deletionResult = await Individual.findOneAndDelete({ email });
+        } else if (role === 'business') {
+            deletionResult = await Business.findOneAndDelete({ business_email: email });
+        } else if (role === 'admin') {
+            deletionResult = await Admin.findOneAndDelete({ email });
+        } else {
+            return res.status(400).json({ message: 'Invalid role provided.' });
+        }
+
+        if (!deletionResult) {
+            return res.status(404).json({ message: 'Account with provided email not found.' });
+        }
+
+        res.status(200).json({ message: 'Account deleted successfully (TEST FUNCTION).' });
+
+    } catch (error) {
+        console.error('Error deleting account by email (TEST FUNCTION):', error);
+        res.status(500).json({ message: 'Failed to delete account.' });
     }
 };

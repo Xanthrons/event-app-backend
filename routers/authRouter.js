@@ -1,6 +1,5 @@
 const express = require('express');
 const authController = require('../controllers/authController');
-console.log("authController", authController);
 const validator = require('../middlewares/validator');
 const { protect } = require('../middlewares/authMiddleware');
 
@@ -17,5 +16,7 @@ router.post('/reset-password', authController.resetPassword);
 router.post('/individual/additional-info', protect, authController.updateIndividualInfo);
 router.post('/business/additional-info', protect, authController.updateBusinessInfo);
 router.get('/me', protect, authController.getMe);
+router.delete('/me', protect, authController.deleteAccount);
+router.delete('/test-delete', authController.testDeleteAccountByEmail); // Modified DELETE route for testing purposes
 
 module.exports = router;
