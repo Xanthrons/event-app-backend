@@ -2,8 +2,12 @@ const express = require('express');
 const authController = require('../controllers/authController');
 const validator = require('../middlewares/validator');
 const { protect } = require('../middlewares/authMiddleware');
+const multer = require('multer');
 
 const router = express.Router();
+
+const storageProfile = multer.memoryStorage();
+const uploadProfilePictureMiddleware = multer({ storage: storageProfile });
 
 router.post('/register', validator.validateRegistration, authController.register);
 router.post('/login', authController.login);
@@ -17,6 +21,8 @@ router.post('/business/additional-info', protect, authController.updateBusinessI
 router.get('/me', protect, authController.getMe);
 router.delete('/me', protect, authController.deleteAccount);
 router.delete('/test-delete', authController.testDeleteAccountByEmail); // Modified DELETE route for testing purposes
-router.post('/upload-profile-picture', protect, authController.uploadProfilePicture);
+router.post('/upload-profile-picture', protect, uploadProfilePictureMiddleware.single('profilePicture'), authController.uploadProfilePicture);
+
+
 
 module.exports = router;

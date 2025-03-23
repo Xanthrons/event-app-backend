@@ -45,8 +45,65 @@ cloudinary.config({
 });
 
 // Configure multer for memory storage
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+// const storage = multer.memoryStorage();
+// const upload = multer({ storage: storage });
+exports.uploadProfilePicture = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No profile picture file uploaded.' });
+        }
+
+        const userId = req.user.id;
+        const userRole = req.user.role;
+
+        console.log('User Role:', userRole); // Add this line
+
+        let Model;
+        let folderPrefix;
+
+        if (userRole === 'individual') {
+            Model = Individual;
+            folderPrefix = 'individual';
+        } else if (userRole === 'business') {
+            Model = Business;
+            folderPrefix = 'business';
+        } else {
+            return res.status(400).json({ message: 'Invalid user role for profile picture upload.' });
+        }
+
+        const fileBuffer = req.file.buffer;
+        const base64Image = fileBuffer.toString('base64');
+
+        try {
+            const result = await cloudinary.uploader.upload(`data:${req.file.mimetype};base64,${base64Image}`, {
+                folder: 'profile-pictures',
+                public_id: `${folderPrefix}-${userId}-${Date.now()}`,
+            });
+
+            const profilePictureUrl = result.secure_url;
+
+            const updatedUser = await Model.findByIdAndUpdate(
+                userId,
+                { profile_picture: profilePictureUrl },
+                { new: true }
+            );
+
+            if (!updatedUser) {
+                return res.status(404).json({ message: `${userRole.charAt(0).toUpperCase() + userRole.slice(1)} user not found.` });
+            }
+
+            return res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedUser });
+
+        } catch (cloudinaryError) {
+            console.error('Error uploading to Cloudinary:', cloudinaryError);
+            return res.status(500).json({ message: 'Failed to upload profile picture to Cloudinary.' });
+        }
+
+    } catch (error) {
+        console.error('Error in uploadProfilePicture function:', error);
+        return res.status(500).json({ message: 'Failed to upload profile picture.' });
+    }
+};
 
 // Function to generate JWT token
 const generateToken = (id) => {
@@ -503,53 +560,3 @@ exports.testDeleteAccountByEmail = async (req, res) => {
 
 //Upload Profile picture
 
-exports.uploadProfilePicture = [
-    protect, // Assuming you have this authentication middleware
-    upload.single('profilePicture'), // 'profilePicture' is the name of the field
-    async (req, res) => {
-        try {
-            if (!req.file) {
-                return res.status(400).json({ message: 'No profile picture file uploaded.' });
-            }
-
-            const userId = req.user.id;
-            const userRole = req.user.role; // Assuming your 'protect' middleware adds the user role to 'req.user'
-
-            let Model;
-            let folderPrefix;
-
-            if (userRole === 'individual') {
-                Model = Individual;
-                folderPrefix = 'individual';
-            } else if (userRole === 'business') {
-                Model = Business;
-                folderPrefix = 'business';
-            } else {
-                return res.status(400).json({ message: 'Invalid user role for profile picture upload.' });
-            }
-
-            const result = await cloudinary.uploader.upload(req.file.buffer.toString('base64'), {
-                folder: 'profile-pictures',
-                public_id: `${folderPrefix}-${userId}-${Date.now()}`,
-            });
-
-            const profilePictureUrl = result.secure_url;
-
-            const updatedUser = await Model.findByIdAndUpdate(
-                userId,
-                { profile_picture: profilePictureUrl }, // Corrected field name
-                { new: true }
-            );
-
-            if (!updatedUser) {
-                return res.status(404).json({ message: `${userRole.charAt(0).toUpperCase() + userRole.slice(1)} user not found.` });
-            }
-
-            res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedUser });
-
-        } catch (error) {
-            console.error('Error uploading profile picture to Cloudinary:', error);
-            res.status(500).json({ message: 'Failed to upload profile picture.' });
-        }
-    }
-];
