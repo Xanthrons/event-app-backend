@@ -12,18 +12,6 @@ const userSchema = new mongoose.Schema({
         minlength: 6,
         select:false
     },
-    verified: { 
-        type: Boolean,
-        default: false
-    },
-    verificationCode:{
-        type:String,
-        select:false
-    },
-    verificationCodeValidation: { // Stores the expiration timestamp for the code
-        type: Date,
-        select: false
-    },
     passwordResetCode: { 
         type: String, 
         select: false 

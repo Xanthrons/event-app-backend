@@ -3,18 +3,21 @@ const jwt = require('jsonwebtoken');
 const { hashPassword, comparePassword } = require('../utils/hashing');
 const Joi = require('joi');
 const { ObjectId } = require('mongoose').Types;
-const { sendEmail } = require('../middlewares/sendMail');
+const { sendEmail } = require('../middlewares/sendMail'); // i am  keeping this if i may need it elsewhere
 const bcrypt = require('bcrypt');
-const crypto = require('crypto');   // For generating random tokens 
+const crypto = require('crypto');  
 const {
     validateForgotPassword,
     validateVerifyResetCode,
     validateResetPassword
-} = require('../middlewares/validator'); 
+} = require('../middlewares/validator');
 const path = require('path');
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
 const { protect } = require('../middlewares/authMiddleware');
+const { OAuth2Client } = require('google-auth-library');
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 
 // const admin = require('firebase-admin');
@@ -47,63 +50,6 @@ cloudinary.config({
 // Configure multer for memory storage
 // const storage = multer.memoryStorage();
 // const upload = multer({ storage: storage });
-exports.uploadProfilePicture = async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ message: 'No profile picture file uploaded.' });
-        }
-
-        const userId = req.user.id;
-        const userRole = req.user.role;
-
-        console.log('User Role:', userRole); // Add this line
-
-        let Model;
-        let folderPrefix;
-
-        if (userRole === 'individual') {
-            Model = Individual;
-            folderPrefix = 'individual';
-        } else if (userRole === 'business') {
-            Model = Business;
-            folderPrefix = 'business';
-        } else {
-            return res.status(400).json({ message: 'Invalid user role for profile picture upload.' });
-        }
-
-        const fileBuffer = req.file.buffer;
-        const base64Image = fileBuffer.toString('base64');
-
-        try {
-            const result = await cloudinary.uploader.upload(`data:${req.file.mimetype};base64,${base64Image}`, {
-                folder: 'profile-pictures',
-                public_id: `${folderPrefix}-${userId}-${Date.now()}`,
-            });
-
-            const profilePictureUrl = result.secure_url;
-
-            const updatedUser = await Model.findByIdAndUpdate(
-                userId,
-                { profile_picture: profilePictureUrl },
-                { new: true }
-            );
-
-            if (!updatedUser) {
-                return res.status(404).json({ message: `${userRole.charAt(0).toUpperCase() + userRole.slice(1)} user not found.` });
-            }
-
-            return res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedUser });
-
-        } catch (cloudinaryError) {
-            console.error('Error uploading to Cloudinary:', cloudinaryError);
-            return res.status(500).json({ message: 'Failed to upload profile picture to Cloudinary.' });
-        }
-
-    } catch (error) {
-        console.error('Error in uploadProfilePicture function:', error);
-        return res.status(500).json({ message: 'Failed to upload profile picture.' });
-    }
-};
 
 // Function to generate JWT token
 const generateToken = (id) => {
@@ -123,6 +69,7 @@ const hashVerificationCode = async (code) => {
     const saltRounds = 10;
     return await bcrypt.hash(code, saltRounds);
 };
+// Controller for user registration (Individual and Business) - REVISED
 exports.register = async (req, res) => {
     try {
         const { role, password, ...userData } = req.body;
@@ -134,83 +81,35 @@ exports.register = async (req, res) => {
             existingUser = await User.findOne({ role, business_email: userData.business_email });
         }
 
-        if (existingUser && existingUser.verified) {
-            return res.status(409).json({ message: 'Account with this email is already registered and verified. Please log in.' });
+        if (existingUser) {
+            return res.status(409).json({ message: 'Account with this email is already registered. Please log in.' });
         }
 
-        const verificationCode = generateVerificationCode();
-        const hashedVerificationCode = await hashVerificationCode(verificationCode);
-        const expiryTime = Date.now() + 3600000; // Code expires in 1 hour
+        // Hash the password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
 
-        const registrationData = {
+        // Create the new user
+        const newUser = new User({
             ...userData,
-            password, // Store raw password temporarily
+            password: hashedPassword,
             role,
-            verificationCode: hashedVerificationCode, // Store the hashed code
-            expiryTime,
-        };
+        });
 
-        pendingRegistrations.set(userData.email || userData.business_email, registrationData);
+        await newUser.save();
 
-        const subject = 'Verify Your Email Address';
-        const html = `<p>Your verification code is: <strong>${verificationCode}</strong></p>
-                      <p>This code will expire in 1 hour.</p><br> <p>If you didn’t request this, please ignore this email.</p> <br> <br> <p>Thanks!</p> <br> <p>Team</p>`;
-
-        await sendEmail(userData.email || userData.business_email, subject, html);
-
-        res.status(200).json({ message: 'Verification code sent to your email address.' });
-
-    } catch (error) {
-        console.error('Error during initial registration:', error);
-        res.status(500).json({ message: 'Failed to initiate registration.' });
-    }
-};
-exports.verifyEmail = async (req, res) => {
-    try {
-        const { email, code } = req.body;
-
-        const registrationData = pendingRegistrations.get(email);
-
-        if (!registrationData) {
-            return res.status(404).json({ message: 'No pending registration found for this email or the code has expired.' });
-        }
-
-        const isMatch = await bcrypt.compare(code, registrationData.verificationCode); // Compare the provided code with the stored hash
-
-        if (!isMatch) {
-            return res.status(400).json({ message: 'Invalid verification code.' });
-        }
-
-        if (Date.now() > registrationData.expiryTime) {
-            pendingRegistrations.delete(email);
-            return res.status(400).json({ message: 'Verification code has expired. Please register again.' });
-        }
-
-        const { password, role, ...rest } = registrationData;
-        const hashedPassword = await hashPassword(password);
-
-        let newUser;
-        if (role === 'individual') {
-            newUser = await Individual.create({ ...rest, password: hashedPassword, email: rest.email, verified: true }); // Mark as verified upon successful verification
-        } else if (role === 'business') {
-            newUser = await Business.create({ ...rest, password: hashedPassword, business_email: rest.business_email, verified: true }); // Mark as verified
-        } else if (role === 'admin') {
-            newUser = await Admin.create({ ...rest, password: hashedPassword, email: rest.email, verified: true }); // Mark as verified
-        }
-
-        pendingRegistrations.delete(email);
-
+        // Generate JWT token
         const token = generateToken(newUser._id);
 
-        res.status(201).json({ message: 'Email verified and account created successfully!', token, user: { _id: newUser._id, role: newUser.role, email: newUser.email || newUser.business_email } });
+        res.status(201).json({ message: 'Registration successful.', token: token });
 
     } catch (error) {
-        console.error('Error validating verification code:', error);
-        res.status(500).json({ message: 'Failed to verify email.' });
+        console.error('Error during registration:', error);
+        res.status(500).json({ message: 'Failed to register user.' });
     }
 };
 
-// Controller for user login (Individual, Business, and Admin)
+// Controller for user login (Individual, Business, and Admin) - REVISED
 exports.login = async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -238,17 +137,71 @@ exports.login = async (req, res) => {
             return res.status(401).json({ message: 'Invalid email or password.' });
         }
 
-        if (!user.verified) {
-            return res.status(403).json({ message: 'Email not verified. Please verify your email address.' });
-        }
-
         const token = generateToken(user._id);
 
-        res.status(200).json({ message: 'Login successful!', token, user: { _id: user._id, role: user.role, email: user.email || user.business_email, verified: user.verified } });
+        res.status(200).json({ message: 'Login successful!', token, user: { _id: user._id, role: user.role, email: user.email || user.business_email } });
 
     } catch (error) {
         console.error('Error during login:', error);
         res.status(500).json({ message: 'Failed to login.' });
+    }
+};
+
+// Controller for Google Authentication
+exports.googleAuth = async (req, res) => {
+    try {
+        const { token } = req.body;
+
+        if (!token) {
+            return res.status(400).json({ message: 'Google ID token is required.' });
+        }
+
+        const ticket = await googleClient.verifyIdToken({
+            idToken: token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+
+        const payload = ticket.getPayload();
+        const googleEmail = payload.email;
+        const googleName = payload.name;
+        const googlePicture = payload.picture;
+
+        if (!googleEmail) {
+            return res.status(400).json({ message: 'Could not retrieve email from Google token.' });
+        }
+
+        let user;
+        user = await Individual.findOne({ email: googleEmail });
+        if (!user) {
+            user = await Business.findOne({ business_email: googleEmail });
+        }
+        if (!user) {
+            user = await Admin.findOne({ email: googleEmail });
+        }
+
+        if (user) {
+            // User already exists, generate and return JWT
+            const jwtToken = generateToken(user._id);
+            return res.status(200).json({ message: 'Login successful via Google.', token: jwtToken, user: { _id: user._id, role: user.role, email: user.email || user.business_email, profile_picture: user.profile_picture || googlePicture, first_name: user.first_name || googleName } });
+        } else {
+            // Create a new user
+            const newUser = new User({
+                email: googleEmail,
+                first_name: googleName ? googleName.split(' ')[0] : null,
+                last_name: googleName ? googleName.split(' ')[1] : null,
+                profile_picture: googlePicture,
+                role: 'individual', // Default role for Google signup, adjust as needed
+                password: crypto.randomBytes(20).toString('hex'), // Generate a random password
+            });
+
+            await newUser.save();
+            const jwtToken = generateToken(newUser._id);
+            return res.status(201).json({ message: 'Registration successful via Google.', token: jwtToken, user: { _id: newUser._id, role: newUser.role, email: newUser.email, profile_picture: newUser.profile_picture } });
+        }
+
+    } catch (error) {
+        console.error('Error during Google authentication:', error);
+        res.status(401).json({ message: 'Google authentication failed.' });
     }
 };
 
@@ -262,60 +215,7 @@ exports.logout = async (req, res) => {
     }
 };
 
-// New functions to handle additional information submission
-exports.updateIndividualInfo = async (req, res) => {
-    try {
-        const schema = Joi.object({
-            fieldOfStudy: Joi.string().optional().allow(null, ''),
-            areasOfStudy: Joi.array().items(Joi.string()).optional().allow(null, ''),
-            interests: Joi.array().items(Joi.string()).optional().allow(null, ''),
-            aboutYourself: Joi.string().optional().allow(null, '')
-        });
-        const { error } = schema.validate(req.body);
-        if (error) return res.status(400).json({ message: error.details[0].message });
-
-        const individualId = req.user.id; // Assuming you have authentication middleware setting req.user
-        const updatedIndividual = await Individual.findByIdAndUpdate(individualId, req.body, { new: true });
-
-        if (!updatedIndividual) {
-            return res.status(404).json({ message: 'Individual user not found.' });
-        }
-
-        res.status(200).json({ message: 'Additional information updated successfully.', user: updatedIndividual });
-
-    } catch (error) {
-        console.error('Error updating individual info:', error);
-        res.status(500).json({ message: 'Failed to update additional information.' });
-    }
-};
-
-exports.updateBusinessInfo = async (req, res) => {
-    try {
-        const schema = Joi.object({
-            businessIn: Joi.string().optional().allow(null, ''),
-            areasOfOperation: Joi.array().items(Joi.string()).optional().allow(null, ''),
-            interestedIn: Joi.array().items(Joi.string()).optional().allow(null, ''),
-            aboutOrganization: Joi.string().optional().allow(null, '')
-        });
-        const { error } = schema.validate(req.body);
-        if (error) return res.status(400).json({ message: error.details[0].message });
-
-        const businessId = req.user.id; // Assuming you have authentication middleware setting req.user
-        const updatedBusiness = await Business.findByIdAndUpdate(businessId, req.body, { new: true });
-
-        if (!updatedBusiness) {
-            return res.status(404).json({ message: 'Business user not found.' });
-        }
-
-        res.status(200).json({ message: 'Additional information updated successfully.', user: updatedBusiness });
-
-    } catch (error) {
-        console.error('Error updating business info:', error);
-        res.status(500).json({ message: 'Failed to update additional information.' });
-    }
-};
-
-// New function to get user profile (including role)
+// Controller for user profile 
 exports.getMe = async (req, res) => {
     try {
         // req.user is set by the 'protect' middleware
@@ -384,9 +284,9 @@ exports.forgotPassword = async (req, res) => {
 
         const subject = 'Password Reset Verification Code';
         const html = `<p>You have requested to reset your password. Please use the following verification code:</p>
-                   <h2>${verificationCode}</h2>
-                   <p>This code will expire in 15 minutes.</p>
-                   <p>If you did not request this, please ignore this email.</p>`;
+                                    <h2>${verificationCode}</h2>
+                                    <p>This code will expire in 15 minutes.</p>
+                                    <p>If you did not request this, please ignore this email.</p>`;
 
         await sendEmail(user.email || user.business_email, subject, html);
 
@@ -497,7 +397,7 @@ exports.resetPassword = async (req, res) => {
     }
 };
 
-// main delete account function
+// Main delete account function
 exports.deleteAccount = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -560,3 +460,60 @@ exports.testDeleteAccountByEmail = async (req, res) => {
 
 //Upload Profile picture
 
+exports.uploadProfilePicture = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No profile picture file uploaded.' });
+        }
+
+        const userId = req.user.id;
+        const userRole = req.user.role;
+
+        console.log('User Role:', userRole); // Add this line
+
+        let Model;
+        let folderPrefix;
+
+        if (userRole === 'individual') {
+            Model = Individual;
+            folderPrefix = 'individual';
+        } else if (userRole === 'business') {
+            Model = Business;
+            folderPrefix = 'business';
+        } else {
+            return res.status(400).json({ message: 'Invalid user role for profile picture upload.' });
+        }
+
+        const fileBuffer = req.file.buffer;
+        const base64Image = fileBuffer.toString('base64');
+
+        try {
+            const result = await cloudinary.uploader.upload(`data:${req.file.mimetype};base64,${base64Image}`, {
+                folder: 'profile-pictures',
+                public_id: `${folderPrefix}-${userId}-${Date.now()}`,
+            });
+
+            const profilePictureUrl = result.secure_url;
+
+            const updatedUser = await Model.findByIdAndUpdate(
+                userId,
+                { profile_picture: profilePictureUrl },
+                { new: true }
+            );
+
+            if (!updatedUser) {
+                return res.status(404).json({ message: `${userRole.charAt(0).toUpperCase() + userRole.slice(1)} user not found.` });
+            }
+
+            return res.status(200).json({ message: 'Profile picture uploaded successfully.', user: updatedUser });
+
+        } catch (cloudinaryError) {
+            console.error('Error uploading to Cloudinary:', cloudinaryError);
+            return res.status(500).json({ message: 'Failed to upload profile picture to Cloudinary.' });
+        }
+
+    } catch (error) {
+        console.error('Error in uploadProfilePicture function:', error);
+        return res.status(500).json({ message: 'Failed to upload profile picture.' });
+    }
+};
