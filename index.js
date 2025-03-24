@@ -3,7 +3,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const authRouter = require('./routers/authRouter')
-
+const eventRouter = require('./routers/eventRoutes');
 
 
 const app = express();
@@ -18,6 +18,7 @@ mongoose.connect(process.env.MONGO_URI).then(() => {
     console.log(err);
 });
 app.use('/api/auth',authRouter)
+app.use('/api/event',eventRouter)
 app.get('/', (req, res) => {
     res.json({message:'Hello World'});
 });

@@ -19,6 +19,7 @@ router.get('/me', protect, authController.getMe);
 router.delete('/me', protect, authController.deleteAccount);
 router.delete('/test-delete', authController.testDeleteAccountByEmail); // Modified DELETE route for testing purposes
 router.post('/upload-profile-picture', protect, uploadProfilePictureMiddleware.single('profilePicture'), authController.uploadProfilePicture);
+router.post('/google-auth', authController.googleAuth);
 
 
 
